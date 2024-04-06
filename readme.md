@@ -14,3 +14,6 @@ In the field of time series, due to different sensor positions or other reasons,
 3. Calculate Spearman correlation coefficient within each slice
 4. Capture useful parts
 5. Average the Spearman correlation coefficients obtained from each slice
+
+# update
+Added application of different correlation coefficients, existing correlation coefficients are calculated mainly by: ['pearsonr', 'spearmanr', 'kendalltau']

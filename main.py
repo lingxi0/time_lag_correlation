@@ -1,10 +1,12 @@
 import argparse
 import os
+
+import numpy as np
 from matplotlib import pyplot as plt
 from pandas import read_csv, DataFrame
 from numpy import newaxis, concatenate, linspace, array, min, max
 from scipy.interpolate import make_interp_spline
-from scipy.stats import spearmanr
+from scipy.stats import pearsonr, spearmanr, kendalltau
 from matplotlib import rc
 
 
@@ -20,11 +22,12 @@ def create_data(dataset, window_len: int, step_len: int):
 
 
 class CreateCorrelation:
-    def __init__(self, start: int, end: int, interval: int):
+    def __init__(self, start: int, end: int, interval: int, correlation: str):
         """
         :param start: The starting position of lag
         :param end: The ending position of lag
         :param interval: The interval of lag
+        :param interval: The method of correlation
         """
         # get all files in data file
         all_data_file = os.listdir('./data/')
@@ -43,6 +46,10 @@ class CreateCorrelation:
         self.end = end
         self.interval = interval
 
+        if correlation not in ['pearsonr', 'spearmanr', 'kendalltau']:
+            raise 'The calculation method for correlation coefficient is only: pearsonr/spearmanr/kendalltau'
+        self.method = correlation
+
         self.x = None
         self.cc = None
 
@@ -59,7 +66,7 @@ class CreateCorrelation:
                 tmp.loc[:, str_tmp] = d
             tmp.dropna(inplace=True)
 
-    def creat_data(self, window_len=60, step_len=30):
+    def creat_data(self, window_len: int, step_len: int):
         """
         Using sliding time windows to obtain data from different windows for future calculations
         """
@@ -69,23 +76,41 @@ class CreateCorrelation:
             x = concatenate((x, x1), axis=0)
         self.x = x
 
-    def compute_correlation(self):
-        cc = spearmanr(self.x[0], axis=0)[0]
-        cc = cc[0:self.variables_num, self.variables_num:]
-        cc = cc[:, newaxis, :]
-        for i in self.x[1:]:
-            cc1 = spearmanr(i, axis=0)[0]
+    def _computer_4_pearsonr_and_kendalltau(self, i):
+        if self.method == 'pearsonr':
+            tmp_method = pearsonr
+        else:
+            tmp_method = kendalltau
+
+        cc1 = np.zeros((i.shape[1], i.shape[1]))
+        for m in range(i.shape[1]):
+            for n in range(m, i.shape[1]):
+                cc1[m, n] = tmp_method(i[:, m], i[:, n])[0]
+        return cc1
+
+    def compute_correlation(self, save_or_not: bool):
+        tmp_cc = []
+        for i in self.x:
+            if self.method == 'pearsonr':
+                cc1 = self._computer_4_pearsonr_and_kendalltau(i)
+            elif self.method == 'spearmanr':
+                cc1 = spearmanr(i, axis=0)[0]
+            else:
+                cc1 = self._computer_4_pearsonr_and_kendalltau(i)
+
             cc1 = cc1[0:self.variables_num, self.variables_num:]
             cc1 = cc1[:, newaxis, :]
-            cc = concatenate((cc, cc1), axis=1)
+            tmp_cc.append(cc1)
 
+        cc = concatenate(tmp_cc, axis=1)
         self.cc = cc.mean(axis=1)
-        cc = cc.mean(axis=1)
-        cc = DataFrame(cc)
-        cc.to_csv('./result/lag_all.csv')
+        if save_or_not:
+            cc = cc.mean(axis=1)
+            cc = DataFrame(cc)
+            cc.to_csv('./result/' + self.method + '_lag_all.csv')
 
     def smooth_and_plot(self):
-        self.cc = read_csv('./result/lag_all.csv', header=0, index_col=0).values
+        self.cc = read_csv('./result/' + self.method + '_lag_all.csv', header=0, index_col=0).values
         b = array([i for i in range(self.start, self.end, self.interval)])
         b_new = linspace(min(b), max(b), (self.end - self.start) * 10)
         cc_new = make_interp_spline(b, self.cc[0])(b_new)
@@ -108,15 +133,16 @@ class CreateCorrelation:
         ax.legend(self.variables_name)
 
         plt.tight_layout()
-        plt.savefig('./result/lag_all.svg', format='svg')
+        plt.savefig('./result/' + self.method + '_lag_all.svg', format='svg')
         plt.close("all")
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='A program for calculating time lag correlation')
 
-    parser.add_argument('--compute_correlation', type=bool, default=True, help='Do you want to recalculate the '
-                                                                               'correlation coefficient')
+    parser.add_argument('--which_correlation', type=str, default='kendalltau',
+                        choices=['pearsonr', 'spearmanr', 'kendalltau'],
+                        help='What correlation calculation method to choose')
 
     parser.add_argument('--start_position', type=int, default=-30, help='The starting position of lag')
     parser.add_argument('--ending_position', type=int, default=1, help='The ending position of lag')
@@ -127,11 +153,12 @@ if __name__ == '__main__':
     parser.add_argument('--window_len', type=int, default=60, help='The length of the sliding window')
     parser.add_argument('--step_len', type=int, default=30, help='Moving step size of sliding window')
 
+    parser.add_argument('--if_save', type=bool, default=True, help='Whether to save the lag correlation matrix')
+
     args = parser.parse_args()
 
-    a = CreateCorrelation(args.start_position, args.ending_position, args.interval)
+    a = CreateCorrelation(args.start_position, args.ending_position, args.interval, args.which_correlation)
     a.add_lag(args.target)
     a.creat_data(args.window_len, args.step_len)
-    if args.compute_correlation:
-        a.compute_correlation()
+    a.compute_correlation(args.if_save)
     a.smooth_and_plot()
